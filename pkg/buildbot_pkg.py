@@ -20,6 +20,7 @@ from __future__ import print_function
 # https://seasonofcode.com/posts/how-to-add-custom-build-steps-and-commands-to-setuppy.html
 import datetime
 import distutils.cmd
+import json
 import os
 import re
 import subprocess
@@ -196,6 +197,15 @@ class BuildJsCommand(distutils.cmd.Command):
     def finalize_options(self):
         """Post-process options."""
 
+    def has_package_json_script(self, script_name):
+        with open('package.json') as in_f:
+            package_json = json.load(in_f)
+        if 'scripts' not in package_json:
+            return False
+        if script_name not in package_json['scripts']:
+            return False
+        return True
+
     def run(self):
         """Run command."""
         if self.already_run:
@@ -207,6 +217,18 @@ class BuildJsCommand(distutils.cmd.Command):
             yarn_bin = check_output("yarn bin").strip()
 
             commands = []
+
+            # Certain buildbot-related packages have their dependencies from local packages when
+            # building using relative paths. Unfortunately yarn caches the contents of such
+            # packages and the only way to properly purge the cache is removing the dependency from
+            # package.json and re-adding it. Such actions have been added to "yarn-update-local"
+            # script rule in packages that need it. We always run it if it's available when
+            # building python packages, because it needs to be run after each change to the
+            # dependency packages in questions. This is easy to forget yet may lead to weird issues
+            # and huge waste of time figuring them out. The official release process is immune to
+            # this problem because python packages are built from completely clean environment.
+            if self.has_package_json_script('yarn-update-local'):
+                commands.append(['yarn', 'run', 'yarn-update-local'])
 
             commands.append(['yarn', 'install', '--pure-lockfile'])
 
